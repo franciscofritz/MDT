@@ -6,7 +6,7 @@ import numpy as np
 from mdt.components_loader import ComponentConfig, ComponentBuilder, method_binding_meta
 from mdt.model_protocol_problem import MissingColumns, InsufficientShells
 from mdt.models.base import DMRIOptimizable
-from mdt.models.parsers.SingleModelExpressionParser import parse
+from mdt.models.parsers.CompositeModelExpressionParser import parse
 from mdt.protocols import VirtualColumnB
 from mdt.utils import create_roi, calculate_information_criterions
 from mot.cl_data_type import CLDataType
@@ -25,9 +25,10 @@ __maintainer__ = "Robbert Harms"
 __email__ = "robbert.harms@maastrichtuniversity.nl"
 
 
-class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
+class DMRICompositeModel(SampleModelBuilder, DMRIOptimizable):
 
-    def __init__(self, model_name, model_tree, evaluation_model, signal_noise_model=None, problem_data=None):
+    def __init__(self, model_name, model_tree, evaluation_model, signal_noise_model=None, problem_data=None,
+                 add_default_weights_dependency=True):
         """Create a composite dMRI sample model.
 
         This also implements the perturbation interface to allow perturbation of the data during meta-optimization.
@@ -35,12 +36,17 @@ class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
         It furthermore implements some protocol check functions. These are used by the fit_model functions in MDT
         to check if the protocol is correct for the model we try to fit.
 
+        Args:
+            add_default_weights_dependency (boolean): if we want to add the default weights dependency to this model
+                or not, by default we use this.
+
         Attributes:
             required_nmr_shells (int): Define the minimum number of unique shells necessary for this model.
                 The default is false, which means that we don't check for this.
         """
-        super(DMRISingleModel, self).__init__(model_name, model_tree, evaluation_model, signal_noise_model,
-                                              problem_data=problem_data)
+        self._add_default_weights_dependency = add_default_weights_dependency
+        super(DMRICompositeModel, self).__init__(model_name, model_tree, evaluation_model, signal_noise_model,
+                                                 problem_data=problem_data)
         self.required_nmr_shells = False
         self._logger = logging.getLogger(__name__)
         self._original_problem_data = None
@@ -51,10 +57,10 @@ class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
         """
         self._check_data_consistency(problem_data)
         self._original_problem_data = problem_data
-        return super(DMRISingleModel, self).set_problem_data(self._prepare_problem_data(problem_data))
+        return super(DMRICompositeModel, self).set_problem_data(self._prepare_problem_data(problem_data))
 
     def get_problems_var_data(self):
-        var_data_dict = super(DMRISingleModel, self).get_problems_var_data()
+        var_data_dict = super(DMRICompositeModel, self).get_problems_var_data()
 
         if self._problem_data.gradient_deviations is not None:
             if len(self._problem_data.gradient_deviations.shape) > 2:
@@ -110,10 +116,12 @@ class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
         return self._model_tree
 
     def _set_default_dependencies(self):
-        super(DMRISingleModel, self)._set_default_dependencies()
-        names = [w.name + '.w' for w in self._get_weight_models()]
-        if len(names):
-            self.add_parameter_dependency(names[0], WeightSumToOneRule(names[1:]))
+        super(DMRICompositeModel, self)._set_default_dependencies()
+
+        if self._add_default_weights_dependency:
+            names = [w.name + '.w' for w in self._get_weight_models()]
+            if len(names):
+                self.add_parameter_dependency(names[0], WeightSumToOneRule(names[1:]))
 
     def _get_weight_models(self):
         return [n.data for n in self._model_tree.leaves if isinstance(n.data, Weight)]
@@ -163,7 +171,7 @@ class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
                and 'g' in list(self.get_problems_protocol_data().keys())
 
     def _add_finalizing_result_maps(self, results_dict):
-        super(DMRISingleModel, self)._add_finalizing_result_maps(results_dict)
+        super(DMRICompositeModel, self)._add_finalizing_result_maps(results_dict)
 
         log_likelihood_calc = LogLikelihoodCalculator()
         log_likelihoods = log_likelihood_calc.calculate(self, results_dict)
@@ -257,10 +265,10 @@ class DMRISingleModel(SampleModelBuilder, DMRIOptimizable):
         return list(range(problem_data.protocol.length))
 
 
-class DMRISingleModelConfig(ComponentConfig):
+class DMRICompositeModelConfig(ComponentConfig):
     """The cascade config to inherit from.
 
-    These configs are loaded on the fly by the DMRISingleModelBuilder
+    These configs are loaded on the fly by the DMRICompositeModelBuilder
 
     Attributes:
         name (str): the name of the model, defaults to the class name
@@ -281,7 +289,7 @@ class DMRISingleModelConfig(ComponentConfig):
                                 ...]
 
         model_expression (str): the model expression. For the syntax see:
-            mdt.models.parsers.SingleModelExpression.ebnf
+            mdt.models.parsers.CompositeModelExpression.ebnf
         evaluation_model (EvaluationModel): the evaluation model to use during optimization
         signal_noise_model (SignalNoiseModel): optional signal noise decorator
         inits (dict): indicating the initialization values for the parameters. Example:
@@ -310,6 +318,7 @@ class DMRISingleModelConfig(ComponentConfig):
 
         parameter_transforms (dict): the parameter transform to use for a specific parameter. Can also be
             a python callback function accepting as single parameter 'self', a reference to the build model.
+            This overwrites the default parameter transform of the specified parameter to the given transformation.
             Example:
 
             .. code-block:: python
@@ -319,6 +328,9 @@ class DMRISingleModelConfig(ComponentConfig):
                     'Tensor.dperp1': lambda self: SinSqrClampDependentTransform(
                                                     [(self, self._get_parameter_by_name('Tensor.dperp0'))])
                 }
+
+        add_default_weights_dependency (boolean): set to False to disable the automatic Weight-sum-to-one dependency.
+            By default it is True and we add them.
     """
     name = ''
     in_vivo_suitable = True
@@ -334,6 +346,7 @@ class DMRISingleModelConfig(ComponentConfig):
     upper_bounds = {}
     lower_bounds = {}
     parameter_transforms = {}
+    add_default_weights_dependency = True
 
     @classmethod
     def meta_info(cls):
@@ -345,23 +358,24 @@ class DMRISingleModelConfig(ComponentConfig):
         return meta_info
 
 
-class DMRISingleModelBuilder(ComponentBuilder):
+class DMRICompositeModelBuilder(ComponentBuilder):
 
     def create_class(self, template):
-        """Creates classes with as base class DMRISingleModel
+        """Creates classes with as base class DMRICompositeModel
 
         Args:
-            template (DMRISingleModelConfig): the single model config template
+            template (DMRICompositeModelConfig): the composite model config template
                 to use for creating the class with the right init settings.
         """
-        class AutoCreatedDMRISingleModel(method_binding_meta(template, DMRISingleModel)):
+        class AutoCreatedDMRICompositeModel(method_binding_meta(template, DMRICompositeModel)):
 
             def __init__(self, *args):
-                super(AutoCreatedDMRISingleModel, self).__init__(
+                super(AutoCreatedDMRICompositeModel, self).__init__(
                     deepcopy(template.name),
                     CompartmentModelTree(parse(template.model_expression)),
                     deepcopy(template.evaluation_model),
-                    signal_noise_model=deepcopy(template.signal_noise_model))
+                    signal_noise_model=deepcopy(template.signal_noise_model),
+                    add_default_weights_dependency=template.add_default_weights_dependency)
 
                 self.add_parameter_dependencies(deepcopy(template.dependencies))
                 self.add_post_optimization_modifiers(deepcopy(template.post_optimization_modifiers))
@@ -384,4 +398,4 @@ class DMRISingleModelBuilder(ComponentBuilder):
                     else:
                         self.set_parameter_transform(full_param_name, deepcopy(value))
 
-        return AutoCreatedDMRISingleModel
+        return AutoCreatedDMRICompositeModel

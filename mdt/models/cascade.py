@@ -3,7 +3,8 @@ from copy import deepcopy
 import six
 
 import mdt
-from mdt.components_loader import ComponentConfig, ComponentBuilder, bind_function, method_binding_meta
+from mdt.components_loader import ComponentConfig, ComponentBuilder, bind_function, method_binding_meta, get_meta_info
+from mdt.deferred_mappings import DeferredFunctionDict
 from mdt.model_protocol_problem import NamedProtocolProblem
 from mdt.models.base import DMRIOptimizable
 from mdt.utils import simple_parameter_init
@@ -197,22 +198,33 @@ class CascadeConfig(ComponentConfig):
             .. code-block:: python
 
                 models = ('BallStick (Cascade)', 'Charmed_r1')
+
         inits (dict): per model the initializations from the previous model. Example:
 
             .. code-block:: python
 
-                inits = {'Charmed_r1': [('Tensor.theta', 'Stick.theta'),
-                                        ('Tensor.phi', 'Stick.phi'),
-                                        ('w_res0.w', 'w_stick.w')]}
+                inits = {'Charmed_r1': [
+                            ('Tensor.theta', 'Stick.theta'),
+                            ('Tensor.phi', 'Stick.phi'),
+                            ('w_res0.w', lambda output_previous, output_all_previous: output_previous['w_stick.w'])
+                            ]
+                        }
 
             In this example the Charmed_r1 model in the cascade initializes its Tensor compartment with a previous
-            Ball&Stick model and initializes with restricted compartment volume fraction with the Stick fraction.
+            Ball&Stick model and initializes the restricted compartment volume fraction with the Stick fraction.
+            You can either provide a string matching the parameter name of the exact previous model, or provide
+            callback function that accepts both a dict containing the previous model estimates
+            and a dict containing all previous model estimates by model name and returns a single initialization map
+            or value.
+
         fixes (dict): per model the fixations from the previous model. Example:
 
             .. code-block:: python
 
                 fixes = {'Charmed_r1': [('CharmedRestricted0.theta', 'Stick.theta'),
                                         ('CharmedRestricted0.phi', 'Stick.phi')]}
+
+            The syntax is similar to that of the inits attribute.
     """
     name = ''
     description = ''
@@ -229,6 +241,16 @@ class CascadeConfig(ComponentConfig):
 
         Use this if you want to control more of the initialization of the next model than only the inits and fixes.
         """
+
+    @classmethod
+    def meta_info(cls):
+        meta_info = deepcopy(ComponentConfig.meta_info())
+        meta_info.update({'name': cls.name,
+                          'description': cls.description,
+                          'in_vivo_suitable': get_meta_info(cls.models[len(cls.models) - 1])['in_vivo_suitable'],
+                          'ex_vivo_suitable': get_meta_info(cls.models[len(cls.models) - 1])['ex_vivo_suitable']
+                          })
+        return meta_info
 
 
 class CascadeBuilder(ComponentBuilder):

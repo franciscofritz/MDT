@@ -1,7 +1,7 @@
 import numpy as np
 
 from mdt.components_loader import bind_function
-from mdt.models.single import DMRISingleModelConfig
+from mdt.models.composite import DMRICompositeModelConfig
 
 __author__ = 'Robbert Harms'
 __date__ = "2015-06-22"
@@ -9,7 +9,7 @@ __maintainer__ = "Robbert Harms"
 __email__ = "robbert.harms@maastrichtuniversity.nl"
 
 
-class Tensor(DMRISingleModelConfig):
+class Tensor(DMRICompositeModelConfig):
 
     ex_vivo_suitable = False
     description = 'The standard Tensor model with in vivo defaults.'
@@ -39,11 +39,10 @@ class TensorExVivo(Tensor):
     name = 'Tensor-ExVivo'
     in_vivo_suitable = False
     description = 'The standard Tensor model with ex vivo defaults.'
-    inits = {'Tensor.d': 0.6e-9,
+    inits = {'Tensor.d': 1e-9,
              'Tensor.dperp0': 0.6e-10,
              'Tensor.dperp1': 0.6e-10}
 
     @bind_function
     def _get_suitable_volume_indices(self, problem_data):
-        print('goit here')
         return list(range(problem_data.protocol.length))
