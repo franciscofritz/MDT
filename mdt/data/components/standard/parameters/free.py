@@ -210,3 +210,13 @@ class gamma_nmr_cyl(FreeParameterConfig):
     upper_bound = 10
     parameter_transform = SinSqrClampTransform()
     sampling_proposal = GaussianProposal(1)
+
+# for use in diffusion ex-vivo input or T1dec for STEAM.
+
+class Dt(FreeParameterConfig):
+
+    init_value = 1.7e-10
+    lower_bound = 0
+    upper_bound = 1.0e-8
+    parameter_transform = SinSqrClampTransform()
+    sampling_proposal = GaussianProposal(1e-14)
