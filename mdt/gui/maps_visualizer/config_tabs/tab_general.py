@@ -5,7 +5,8 @@ from PyQt5.QtCore import pyqtSlot, Qt
 from PyQt5.QtWidgets import QWidget, QAbstractItemView
 
 from mdt.gui.maps_visualizer.actions import SetDimension, SetSliceIndex, SetVolumeIndex, SetColormap, SetRotate, \
-    SetZoom, SetShowAxis, SetColorBarNmrTicks, SetMapsToShow, SetFont, SetInterpolation, SetFlipud
+    SetZoom, SetShowAxis, SetColorBarNmrTicks, SetMapsToShow, SetFont, SetInterpolation, SetFlipud, SetPlotTitle, \
+    SetGeneralMask
 from mdt.gui.maps_visualizer.design.ui_TabGeneral import Ui_TabGeneral
 from mdt.gui.utils import blocked_signals, TimedUpdate
 from mdt.visualization.maps.base import Zoom, Point, DataInfo, Font, MapPlotConfig
@@ -58,6 +59,8 @@ class TabGeneral(QWidget, Ui_TabGeneral):
         self.general_zoom_y_0.valueChanged.connect(self._update_zoom)
         self.general_zoom_y_1.valueChanged.connect(self._update_zoom)
 
+        self.plot_title.textEdited.connect(lambda txt: self._controller.apply_action(SetPlotTitle(txt)))
+
         self.general_zoom_reset.clicked.connect(lambda: self._controller.apply_action(SetZoom(Zoom.no_zoom())))
         self.general_zoom_fit.clicked.connect(self._zoom_fit)
 
@@ -82,6 +85,8 @@ class TabGeneral(QWidget, Ui_TabGeneral):
         self.general_flipud.clicked.connect(lambda: self._controller.apply_action(
             SetFlipud(self.general_flipud.isChecked())))
 
+        self.mask_name.currentIndexChanged.connect(self._update_mask_name)
+
     @pyqtSlot(DataInfo)
     def set_new_data(self, data_info):
         if data_info.directory:
@@ -100,6 +105,11 @@ class TabGeneral(QWidget, Ui_TabGeneral):
             for index, map_name in enumerate(data_info.sorted_keys):
                 item = self.general_map_selection.item(index)
                 item.setData(Qt.UserRole, map_name)
+
+        with blocked_signals(self.mask_name):
+            self.mask_name.clear()
+            self.mask_name.insertItem(0, '-- None --')
+            self.mask_name.insertItems(1, data_info.sorted_keys)
 
     @pyqtSlot(MapPlotConfig)
     def set_new_config(self, config):
@@ -157,8 +167,8 @@ class TabGeneral(QWidget, Ui_TabGeneral):
             self.general_map_selection.blockSignals(False)
 
         try:
-            max_x = data_info.get_max_x(config.dimension, config.rotate, map_names)
-            max_y = data_info.get_max_y(config.dimension, config.rotate, map_names)
+            max_x = data_info.get_max_x_index(config.dimension, config.rotate, map_names)
+            max_y = data_info.get_max_y_index(config.dimension, config.rotate, map_names)
 
             with blocked_signals(self.general_zoom_x_0, self.general_zoom_x_1,
                                  self.general_zoom_y_0, self.general_zoom_y_1):
@@ -183,6 +193,9 @@ class TabGeneral(QWidget, Ui_TabGeneral):
                     self.general_zoom_y_1.setValue(max_y)
         except ValueError:
             pass
+
+        with blocked_signals(self.plot_title):
+            self.plot_title.setText(config.title)
 
         with blocked_signals(self.general_display_order):
             self.general_display_order.clear()
@@ -213,6 +226,15 @@ class TabGeneral(QWidget, Ui_TabGeneral):
 
         with blocked_signals(self.general_flipud):
             self.general_flipud.setChecked(config.flipud)
+
+        with blocked_signals(self.mask_name):
+            if config.mask_name and config.mask_name in data_info.maps:
+                for ind in range(self.mask_name.count()):
+                    if self.mask_name.itemText(ind) == config.mask_name:
+                        self.mask_name.setCurrentIndex(ind)
+                        break
+            else:
+                self.mask_name.setCurrentIndex(0)
 
     @pyqtSlot()
     def _reorder_maps(self):
@@ -250,12 +272,21 @@ class TabGeneral(QWidget, Ui_TabGeneral):
         data_info = self._controller.get_data()
         config = self._controller.get_config()
 
+        def add_padding(bounding_box, max_x, max_y):
+            bounding_box[0].x = max(bounding_box[0].x - 1, 0)
+            bounding_box[0].y = max(bounding_box[0].y - 1, 0)
+
+            bounding_box[1].y = min(bounding_box[1].y + 2, max_y)
+            bounding_box[1].x = min(bounding_box[1].x + 2, max_x)
+
+            return bounding_box
+
         if config.maps_to_show or len(data_info.maps):
             bounding_box = data_info.get_bounding_box(config.dimension, config.slice_index,
                                                       config.volume_index, config.rotate, config.maps_to_show)
 
-            max_y = data_info.get_max_y(config.dimension, rotate=config.rotate, map_names=config.maps_to_show)
-            max_x = data_info.get_max_x(config.dimension, rotate=config.rotate, map_names=config.maps_to_show)
+            max_y = data_info.get_max_y_index(config.dimension, rotate=config.rotate, map_names=config.maps_to_show)
+            max_x = data_info.get_max_x_index(config.dimension, rotate=config.rotate, map_names=config.maps_to_show)
 
             if not config.flipud:
                 # Since the renderer plots with a left top coordinate system,
@@ -264,13 +295,7 @@ class TabGeneral(QWidget, Ui_TabGeneral):
                 bounding_box[0].y = max_y - bounding_box[1].y
                 bounding_box[1].y = tmp
 
-            if bounding_box[0].x > 0:
-                bounding_box[0].x -= 1
-            if bounding_box[0].y > 0:
-                bounding_box[0].y -= 1
-
-            bounding_box[1].y = min(bounding_box[1].y + 2, max_y)
-            bounding_box[1].x = min(bounding_box[1].x + 2, max_x)
+            bounding_box = add_padding(bounding_box, max_x, max_y)
 
             self._controller.apply_action(SetZoom(Zoom(*bounding_box)))
 
@@ -293,6 +318,13 @@ class TabGeneral(QWidget, Ui_TabGeneral):
                 item_list.insert(ind, new_item)
                 return
         item_list.append(new_item)
+
+    @pyqtSlot(int)
+    def _update_mask_name(self, index):
+        if index == 0:
+            self._controller.apply_action(SetGeneralMask(None))
+        else:
+            self._controller.apply_action(SetGeneralMask(self.mask_name.itemText(index)))
 
     def _split_long_path_elements(self, original_path, max_single_element_length=25):
         """Split long path elements into smaller ones using spaces
