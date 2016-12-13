@@ -279,7 +279,10 @@ def view_maps(data, config=None, to_file=None, to_file_options=None,
     if config is None:
         config = MapPlotConfig()
     elif isinstance(config, string_types):
-        config = MapPlotConfig.from_yaml(config)
+        if config.strip():
+            config = MapPlotConfig.from_yaml(config)
+        else:
+            config = MapPlotConfig()
     elif isinstance(config, dict):
         config = MapPlotConfig.from_dict(config)
 
@@ -391,6 +394,25 @@ def write_image(fname, data, header):
     """
     import nibabel as nib
     nib.Nifti1Image(data, None, header).to_filename(fname)
+
+
+def auto_convert_to_trackmark(input_folder, model_name=None, output_folder=None):
+    """Convert the nifti files in the given folder to Trackmark.
+
+    This automatically loads the correct files based on the model name. This is normally the dirname of the given
+    path. If that is not the case you can give the model name explicitly.
+
+    By default it outputs the results to a folder named "trackmark" in the given input folder. This can of course
+    be overridden using the output_folder parameter.
+
+    Args:
+        input_folder (str): the name of the input folder
+        model_name (str): the name of the model, if not given we use the last dirname of the given path
+        output_folder (str): the output folder, if not given we will output to a subfolder "trackmark" in the
+            given directory.
+    """
+    from mdt.nifti import TrackMark
+    TrackMark.auto_convert(input_folder, model_name=model_name, output_folder=output_folder)
 
 
 def write_trackmark_rawmaps(data, output_folder, maps_to_convert=None):
